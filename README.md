@@ -13,8 +13,8 @@ Any failures in verification will result in no changes being made for any of the
 ### Environment variables
 Set the following environment variables as required
 
-| Name | Default | Description | Default |
-|------|---------|-------------|---------|
+| Name | Description | Default |
+|------|-------------|---------|
 | DATA_STORE_DB_URL | CCD Data Store database URL |  jdbc:postgresql://localhost:5055/ccd_data?stringtype=unspecified |
 | DATA_STORE_DB_USERNAME | Username for database | ccd |
 | DATA_STORE_DB_PASSWORD | Password for database | ccd |
