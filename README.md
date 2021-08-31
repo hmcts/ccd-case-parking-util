@@ -33,3 +33,8 @@ DIVORCE,DIVORCE,4444555566667777
 
 The case list file will in future be extended to support the option to park or unpark each provided case. 
 Currently all provided cases will be unparked.
+
+### Building
+To build the application:
+
+```./gradlew assemble```
