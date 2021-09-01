@@ -6,6 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import static com.google.common.base.Strings.isNullOrEmpty;
+
 @Builder
 @Data
 @NoArgsConstructor
@@ -22,6 +24,7 @@ public class Case {
     private String caseReference;
 
     public Long getCaseReferenceAsLong() {
-        return Long.parseLong(getCaseReference().replaceAll("['\"]", ""));
+        return isNullOrEmpty(caseReference) ? null :
+            Long.parseLong(getCaseReference().replaceAll("['\"]", ""));
     }
 }

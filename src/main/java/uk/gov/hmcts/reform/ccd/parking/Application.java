@@ -71,6 +71,7 @@ public class Application implements CommandLineRunner {
                 if (caseReference == null || caseReference == 0L) {
                     log.error("[Record #{}] Case reference {} - case reference is mandatory", i, caseReference);
                     errorFound = true;
+                    continue;
                 }
 
                 Optional<CaseDataEntity> caseDataOpt = caseDataRepository.findCaseDataByReference(caseReference);
