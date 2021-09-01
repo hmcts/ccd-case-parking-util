@@ -26,17 +26,20 @@ Set the following environment variables as required
 | DATA_STORE_DB_USERNAME | Username for database | ccd |
 | DATA_STORE_DB_PASSWORD | Password for database | ccd |
 | CASE_LIST_FILE | Path to csv | *empty* |
+| DRY_RUN | Flag to log only - no changes will be made | false |
 
 ### Case list file
 The case list file must be a csv file, similar to the below example:
 
 ```
-Jurisdiction,CaseType,Case
+Jurisdiction,CaseType,Reference
 AUTOTEST1,AAT,1111222233334444
 AUTOTEST1,AAT,2222333344445555
-AUTOTEST1,AAT,3333444455556666
-DIVORCE,DIVORCE,4444555566667777
+AUTOTEST1,AAT,"3333444455556666"
+DIVORCE,DIVORCE,'4444555566667777'
 ```
+
+Case Reference values can optionally be surrounded by single quotes (`'`) or double quotes (`"`).
 
 All columns are mandatory.
 

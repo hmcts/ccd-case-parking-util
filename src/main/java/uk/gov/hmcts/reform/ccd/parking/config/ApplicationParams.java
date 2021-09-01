@@ -10,4 +10,7 @@ public class ApplicationParams {
 
     @Value("${case_list_file}")
     private String caseListFile;
+
+    @Value("${dry_run}")
+    private boolean dryRun;
 }

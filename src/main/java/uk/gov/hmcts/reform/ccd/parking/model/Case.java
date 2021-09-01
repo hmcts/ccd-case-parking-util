@@ -18,6 +18,10 @@ public class Case {
     @CsvBindByName(column = "CaseType")
     private String caseType;
 
-    @CsvBindByName(column = "Case")
-    private Long caseReference;
+    @CsvBindByName(column = "Reference")
+    private String caseReference;
+
+    public Long getCaseReferenceAsLong() {
+        return Long.parseLong(getCaseReference().replaceAll("['\"]", ""));
+    }
 }

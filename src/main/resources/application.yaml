@@ -7,3 +7,4 @@ spring:
     username: ${DATA_STORE_DB_USERNAME:ccd}
     password: ${DATA_STORE_DB_PASSWORD:ccd}
 case_list_file: ${CASE_LIST_FILE}
+dry_run: ${DRY_RUN:false}
