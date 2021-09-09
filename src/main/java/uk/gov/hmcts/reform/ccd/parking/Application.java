@@ -8,18 +8,25 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import uk.gov.hmcts.reform.ccd.parking.config.ApplicationParams;
 import uk.gov.hmcts.reform.ccd.parking.data.CaseDataEntity;
+import uk.gov.hmcts.reform.ccd.parking.model.Action;
 import uk.gov.hmcts.reform.ccd.parking.model.Case;
 import uk.gov.hmcts.reform.ccd.parking.data.CaseDataRepository;
 
 import java.io.FileReader;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import static uk.gov.hmcts.reform.ccd.parking.model.Action.PARK;
+import static uk.gov.hmcts.reform.ccd.parking.model.Action.UNPARK;
+
 @SpringBootApplication
 @Slf4j
 public class Application implements CommandLineRunner {
+
+    private static final String PARKING_PREFIX = "PARKED_AT__";
 
     @Autowired
     private ApplicationParams applicationParams;
@@ -34,7 +41,7 @@ public class Application implements CommandLineRunner {
     @Override
     public void run(String... args) {
         String caseListFile = applicationParams.getCaseListFile();
-        log.info("START:: Starting unparking process for file {}", caseListFile);
+        log.info("START:: Processing file {}", caseListFile);
 
         try {
             boolean errorFound = false;
@@ -61,6 +68,9 @@ public class Application implements CommandLineRunner {
                 }
             }
 
+            Set<Long> caseReferencesToPark = new HashSet<>();
+            Set<Long> caseReferencesToUnpark = new HashSet<>();
+
             for (int i = 0; i < casesToUpdate.size(); i++) {
                 Case caseToUpdate = casesToUpdate.get(i);
 
@@ -69,7 +79,15 @@ public class Application implements CommandLineRunner {
                 String caseType = caseToUpdate.getCaseType();
 
                 if (caseReference == null || caseReference == 0L) {
-                    log.error("[Record #{}] Case reference {} - case reference is mandatory", i, caseReference);
+                    log.error("[Record #{}] Case reference '{}' - case reference is mandatory", i, caseReference);
+                    errorFound = true;
+                    continue;
+                }
+
+                Optional<Action> actionOpt = caseToUpdate.getActionEnum();
+                if (actionOpt.isEmpty()) {
+                    log.error("[Record #{}] Case reference '{}' - action '{}' is not valid", i, caseReference,
+                        caseToUpdate.getAction());
                     errorFound = true;
                     continue;
                 }
@@ -80,33 +98,49 @@ public class Application implements CommandLineRunner {
                     String actualCaseType = caseData.getCaseTypeId();
                     String actualJurisdiction = caseData.getJurisdiction();
                     String state = caseData.getState();
+                    Action action = actionOpt.get();
 
                     // Check jurisdiction matches
                     if (!actualJurisdiction.equals(jurisdiction)) {
-                        log.error("[Record #{}] Case reference {} - expected jurisdiction {}, found {}", i,
+                        log.error("[Record #{}] Case reference '{}' - expected jurisdiction '{}', found '{}'", i,
                             caseReference, jurisdiction, actualJurisdiction);
                         errorFound = true;
                     }
 
                     // Check case type matches
                     if (!actualCaseType.equals(caseType)) {
-                        log.error("[Record #{}] Case reference {} - expected case type {}, found {}", i,
+                        log.error("[Record #{}] Case reference '{}' - expected case type '{}', found '{}'", i,
                             caseReference, caseType, actualCaseType);
                         errorFound = true;
                     }
 
                     // Check state is as expected
-                    if (!state.startsWith("PARKED_AT__")) { // TODO: Make prefix configurable (and use in update queries)
-                        log.error("[Record #{}] Case reference {} - state is expected to be parked, found {}", i,
-                            caseReference, state);
+                    if (action == UNPARK) {
+                        if (!state.startsWith(PARKING_PREFIX)) {
+                            log.error("[Record #{}] Case reference '{}' - case is already unparked, state is '{}'", i,
+                                caseReference, state);
+                            errorFound = true;
+                        } else {
+                            caseReferencesToUnpark.add(caseReference);
+                        }
+                    } else if (action == PARK) {
+                        if (state.startsWith(PARKING_PREFIX)) {
+                            log.error("[Record #{}] Case reference '{}' - case is already parked, state is '{}'", i,
+                                caseReference, state);
+                            errorFound = true;
+                        } else {
+                            caseReferencesToPark.add(caseReference);
+                        }
+                    } else {
+                        log.error("[Record #{}] Case reference '{}' - action '{}' is not yet implemented", i,
+                            caseReference, action.toString());
                         errorFound = true;
                     }
                 } else {
-                    log.error("[Record #{}] Case reference {} cannot be found", i, caseToUpdate.getCaseReference());
+                    log.error("[Record #{}] Case reference '{}' cannot be found", i, caseToUpdate.getCaseReference());
                 }
             }
 
-            // TODO: Support parking as well as unparking
             if (applicationParams.isDryRun()) {
                 log.info("DRY RUN COMPLETE:: No changes have been made");
                 if (errorFound) {
@@ -117,10 +151,11 @@ public class Application implements CommandLineRunner {
             } else if (errorFound) {
                 log.info("ABORTED:: Issues with dataset - no changes have been made");
             } else {
-                int result = caseDataRepository.unparkCasesByReference(caseReferencesToUpdate);
-                log.info("COMPLETE:: Unparked {} case(s)", result);
+                int unparkResult = caseDataRepository.unparkCasesByReference(caseReferencesToUnpark, PARKING_PREFIX);
+                int parkResult = caseDataRepository.parkCasesByReference(caseReferencesToPark, PARKING_PREFIX);
+                log.info("COMPLETE:: Parked {} case(s) -- Unparked {} case(s) -- Total updated: {}",
+                    parkResult, unparkResult, casesToUpdate.size());
             }
-
         } catch (Exception e) {
             e.printStackTrace();
         }

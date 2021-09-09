@@ -18,6 +18,10 @@ public interface CaseDataRepository extends CrudRepository<CaseDataEntity, Strin
     Optional<CaseDataEntity> findCaseDataByReference(Long caseReference);
 
     @Modifying
-    @Query("UPDATE CaseDataEntity cd SET cd.state = replace(cd.state, 'PARKED_AT__', '') WHERE cd.reference in :caseReferences")
-    int unparkCasesByReference(Set<Long> caseReferences);
+    @Query("UPDATE CaseDataEntity cd SET cd.state = replace(cd.state, :parkingPrefix, '') WHERE cd.reference in :caseReferences")
+    int unparkCasesByReference(Set<Long> caseReferences, String parkingPrefix);
+
+    @Modifying
+    @Query("UPDATE CaseDataEntity cd SET cd.state = :parkingPrefix || cd.state WHERE cd.reference in :caseReferences")
+    int parkCasesByReference(Set<Long> caseReferences, String parkingPrefix);
 }
