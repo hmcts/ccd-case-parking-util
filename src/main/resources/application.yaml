@@ -6,5 +6,6 @@ spring:
     url: ${DATA_STORE_DB_URL:jdbc:postgresql://localhost:5055/ccd_data?stringtype=unspecified}
     username: ${DATA_STORE_DB_USERNAME:ccd}
     password: ${DATA_STORE_DB_PASSWORD:ccd}
-case_list_file: ${CASE_LIST_FILE}
-dry_run: ${DRY_RUN:false}
+case-list-file: ${CASE_LIST_FILE}
+dry-run: ${DRY_RUN:false}
+parking-state-prefix: ${PARKING_STATE_PREFIX:PARKED_AT__}

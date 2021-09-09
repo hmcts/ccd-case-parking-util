@@ -20,11 +20,12 @@ Set the following environment variables as required
 
 | Name | Description | Default |
 |------|-------------|---------|
-| DATA_STORE_DB_URL | CCD Data Store database URL |  jdbc:postgresql://localhost:5055/ccd_data?stringtype=unspecified |
-| DATA_STORE_DB_USERNAME | Username for database | ccd |
-| DATA_STORE_DB_PASSWORD | Password for database | ccd |
+| DATA_STORE_DB_URL | CCD Data Store database URL | `jdbc:postgresql://localhost:5055/ccd_data?stringtype=unspecified` |
+| DATA_STORE_DB_USERNAME | Username for database | `ccd` |
+| DATA_STORE_DB_PASSWORD | Password for database | `ccd` |
+| PARKING_STATE_PREFIX | Prefix for states of parked cases | `PARKED_AT__` | 
 | CASE_LIST_FILE | Path to csv | *empty* |
-| DRY_RUN | Flag to log only - no changes will be made | false |
+| DRY_RUN | Flag to log only - no changes will be made | `false` |
 
 ### Case list file
 The case list file must be a csv file, similar to the below example:

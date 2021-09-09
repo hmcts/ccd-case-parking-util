@@ -11,9 +11,12 @@ import uk.gov.hmcts.reform.ccd.parking.data.CaseDataEntity;
 import uk.gov.hmcts.reform.ccd.parking.model.Action;
 import uk.gov.hmcts.reform.ccd.parking.model.Case;
 import uk.gov.hmcts.reform.ccd.parking.data.CaseDataRepository;
+import uk.gov.hmcts.reform.ccd.parking.model.ParkingError;
+import uk.gov.hmcts.reform.ccd.parking.model.ErrorInput;
+import uk.gov.hmcts.reform.ccd.parking.model.ParkingResult;
 
+import java.io.FileNotFoundException;
 import java.io.FileReader;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -26,8 +29,6 @@ import static uk.gov.hmcts.reform.ccd.parking.model.Action.UNPARK;
 @Slf4j
 public class Application implements CommandLineRunner {
 
-    private static final String PARKING_PREFIX = "PARKED_AT__";
-
     @Autowired
     private ApplicationParams applicationParams;
 
@@ -39,125 +40,151 @@ public class Application implements CommandLineRunner {
     }
 
     @Override
-    public void run(String... args) {
+    public void run(String... args) throws FileNotFoundException {
         String caseListFile = applicationParams.getCaseListFile();
         log.info("START:: Processing file {}", caseListFile);
 
-        try {
-            boolean errorFound = false;
+        List<Case> casesToUpdate = getCasesFromFile(caseListFile);
 
-            List<Case> casesToUpdate = new CsvToBeanBuilder(new FileReader(caseListFile))
-                .withType(Case.class)
-                .build()
-                .parse();
+        ParkingResult parkingResult = new ParkingResult(applicationParams.getParkingStatePrefix());
+        verifyNumberOfCases(casesToUpdate, ErrorInput.builder()
+            .allErrors(parkingResult.getErrors())
+            .errorBuilder(ParkingError.builder())
+            .build());
 
-            Set<Long> caseReferencesToUpdate = casesToUpdate.stream()
-                .map(Case::getCaseReferenceAsLong)
-                .collect(Collectors.toSet());
+        for (int i = 0; i < casesToUpdate.size(); i++) {
+            processRecord(casesToUpdate.get(i), i, parkingResult);
+        }
 
-            if (caseReferencesToUpdate.size() != casesToUpdate.size()) {
-                log.error("Duplicate case references found - expected {} unique references, found {}",
-                    casesToUpdate.size(), caseReferencesToUpdate.size());
-                errorFound = true;
+        processResult(parkingResult);
+    }
+
+    private List<Case> getCasesFromFile(String caseListFile) throws FileNotFoundException {
+        return new CsvToBeanBuilder(new FileReader(caseListFile))
+            .withType(Case.class)
+            .build()
+            .parse();
+    }
+
+    private void processRecord(Case caseToUpdate, int recordIndex, ParkingResult parkingResult) {
+        Long caseReference = caseToUpdate.getCaseReferenceAsLong();
+
+        ErrorInput errorInput = ErrorInput.builder()
+            .allErrors(parkingResult.getErrors())
+            .errorBuilder(ParkingError.builder()
+                .recordIndex(recordIndex)
+                .reference(caseReference))
+            .build();
+
+        if (!isValidCaseReference(caseReference, errorInput)
+            || !isValidAction(caseToUpdate, errorInput)) {
+            // Stop processing the record if there is already a fundamental issue prior to getting case details
+            return;
+        }
+
+        Optional<CaseDataEntity> caseDataOpt = caseDataRepository.findCaseDataByReference(caseReference);
+        if (caseDataOpt.isPresent()) {
+            CaseDataEntity caseData = caseDataOpt.get();
+            verifyJurisdiction(caseToUpdate.getJurisdiction(), caseData.getJurisdiction(), errorInput);
+            verifyCaseType(caseToUpdate.getCaseType(), caseData.getCaseTypeId(), errorInput);
+            verifyStateForAction(caseToUpdate, caseData.getState(), errorInput, parkingResult);
+        } else {
+            errorInput.addError(String.format("Case reference '%s' cannot be found", caseToUpdate.getCaseReference()));
+        }
+    }
+
+    private void processResult(ParkingResult parkingResult) {
+        if (applicationParams.isDryRun()) {
+            log.info("DRY RUN COMPLETE:: No changes have been made");
+            if (!parkingResult.getErrors().isEmpty()) {
+                parkingResult.logErrors();
+                log.info("DRY RUN COMPLETE:: Issues with dataset were found");
             } else {
-                int dbCaseCount = caseDataRepository.getCaseCount(caseReferencesToUpdate);
-                if (dbCaseCount != casesToUpdate.size()) {
-                    log.error("Difference in number of cases found in DB - expected {}, found {} in DB",
-                        dbCaseCount, casesToUpdate.size());
-                    errorFound = true;
-                }
+                log.info("DRY RUN COMPLETE:: No issues with dataset were found");
             }
+        } else if (!parkingResult.getErrors().isEmpty()) {
+            parkingResult.logErrors();
+            log.info("ABORTED:: Issues with dataset - no changes have been made");
+        } else {
+            int unparkResult = caseDataRepository.unparkCasesByReference(parkingResult.getCaseReferencesToUnpark(),
+                parkingResult.getStatePrefix());
+            int parkResult = caseDataRepository.parkCasesByReference(parkingResult.getCaseReferencesToPark(),
+                parkingResult.getStatePrefix());
+            log.info("COMPLETE:: Parked {} case(s) -- Unparked {} case(s) -- Total updated: {}",
+                parkResult, unparkResult, parkResult + unparkResult);
+        }
+    }
 
-            Set<Long> caseReferencesToPark = new HashSet<>();
-            Set<Long> caseReferencesToUnpark = new HashSet<>();
-
-            for (int i = 0; i < casesToUpdate.size(); i++) {
-                Case caseToUpdate = casesToUpdate.get(i);
-
-                Long caseReference = caseToUpdate.getCaseReferenceAsLong();
-                String jurisdiction = caseToUpdate.getJurisdiction();
-                String caseType = caseToUpdate.getCaseType();
-
-                if (caseReference == null || caseReference == 0L) {
-                    log.error("[Record #{}] Case reference '{}' - case reference is mandatory", i, caseReference);
-                    errorFound = true;
-                    continue;
-                }
-
-                Optional<Action> actionOpt = caseToUpdate.getActionEnum();
-                if (actionOpt.isEmpty()) {
-                    log.error("[Record #{}] Case reference '{}' - action '{}' is not valid", i, caseReference,
-                        caseToUpdate.getAction());
-                    errorFound = true;
-                    continue;
-                }
-
-                Optional<CaseDataEntity> caseDataOpt = caseDataRepository.findCaseDataByReference(caseReference);
-                if (caseDataOpt.isPresent()) {
-                    CaseDataEntity caseData = caseDataOpt.get();
-                    String actualCaseType = caseData.getCaseTypeId();
-                    String actualJurisdiction = caseData.getJurisdiction();
-                    String state = caseData.getState();
-                    Action action = actionOpt.get();
-
-                    // Check jurisdiction matches
-                    if (!actualJurisdiction.equals(jurisdiction)) {
-                        log.error("[Record #{}] Case reference '{}' - expected jurisdiction '{}', found '{}'", i,
-                            caseReference, jurisdiction, actualJurisdiction);
-                        errorFound = true;
-                    }
-
-                    // Check case type matches
-                    if (!actualCaseType.equals(caseType)) {
-                        log.error("[Record #{}] Case reference '{}' - expected case type '{}', found '{}'", i,
-                            caseReference, caseType, actualCaseType);
-                        errorFound = true;
-                    }
-
-                    // Check state is as expected
-                    if (action == UNPARK) {
-                        if (!state.startsWith(PARKING_PREFIX)) {
-                            log.error("[Record #{}] Case reference '{}' - case is already unparked, state is '{}'", i,
-                                caseReference, state);
-                            errorFound = true;
-                        } else {
-                            caseReferencesToUnpark.add(caseReference);
-                        }
-                    } else if (action == PARK) {
-                        if (state.startsWith(PARKING_PREFIX)) {
-                            log.error("[Record #{}] Case reference '{}' - case is already parked, state is '{}'", i,
-                                caseReference, state);
-                            errorFound = true;
-                        } else {
-                            caseReferencesToPark.add(caseReference);
-                        }
-                    } else {
-                        log.error("[Record #{}] Case reference '{}' - action '{}' is not yet implemented", i,
-                            caseReference, action.toString());
-                        errorFound = true;
-                    }
-                } else {
-                    log.error("[Record #{}] Case reference '{}' cannot be found", i, caseToUpdate.getCaseReference());
-                }
-            }
-
-            if (applicationParams.isDryRun()) {
-                log.info("DRY RUN COMPLETE:: No changes have been made");
-                if (errorFound) {
-                    log.info("DRY RUN COMPLETE:: Issues with dataset were found");
-                } else {
-                    log.info("DRY RUN COMPLETE:: No issues with dataset were found");
-                }
-            } else if (errorFound) {
-                log.info("ABORTED:: Issues with dataset - no changes have been made");
+    private void verifyStateForAction(Case caseToUpdate,
+                                      String currentState,
+                                      ErrorInput errorInput,
+                                      ParkingResult parkingResult) {
+        Action action = caseToUpdate.getActionEnum().orElseThrow();
+        if (action == UNPARK) {
+            if (!currentState.startsWith(parkingResult.getStatePrefix())) {
+                errorInput.addError(String.format("Case is already unparked, state is '%s'", currentState));
             } else {
-                int unparkResult = caseDataRepository.unparkCasesByReference(caseReferencesToUnpark, PARKING_PREFIX);
-                int parkResult = caseDataRepository.parkCasesByReference(caseReferencesToPark, PARKING_PREFIX);
-                log.info("COMPLETE:: Parked {} case(s) -- Unparked {} case(s) -- Total updated: {}",
-                    parkResult, unparkResult, casesToUpdate.size());
+                parkingResult.getCaseReferencesToUnpark().add(caseToUpdate.getCaseReferenceAsLong());
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } else if (action == PARK) {
+            if (currentState.startsWith(parkingResult.getStatePrefix())) {
+                errorInput.addError(String.format("Case is already parked, state is '%s'", currentState));
+            } else {
+                parkingResult.getCaseReferencesToPark().add(caseToUpdate.getCaseReferenceAsLong());
+            }
+        } else {
+            errorInput.addError(String.format("Action '%s' is not yet implemented", action.toString()));
+        }
+    }
+
+    private void verifyCaseType(String expectedCaseType,
+                                String actualCaseType,
+                                ErrorInput errorInput) {
+        if (!actualCaseType.equals(expectedCaseType)) {
+            errorInput.addError(String.format("Expected case type '%s', found '%s'",
+                expectedCaseType, actualCaseType));
+        }
+    }
+
+    private void verifyJurisdiction(String expectedJurisdiction,
+                                    String actualJurisdiction,
+                                    ErrorInput errorInput) {
+        if (!actualJurisdiction.equals(expectedJurisdiction)) {
+            errorInput.addError(String.format("Expected jurisdiction '%s', found '%s'",
+                expectedJurisdiction, actualJurisdiction));
+        }
+    }
+
+    private boolean isValidAction(Case caseToUpdate, ErrorInput errorInput) {
+        if (caseToUpdate.getActionEnum().isEmpty()) {
+            errorInput.addError(String.format("Action '%s' is not valid", caseToUpdate.getAction()));
+            return false;
+        }
+        return true;
+    }
+
+    private boolean isValidCaseReference(Long caseReference, ErrorInput errorInput) {
+        if (caseReference == null || caseReference == 0L) {
+            errorInput.addError("Case reference is mandatory");
+            return false;
+        }
+        return true;
+    }
+
+    private void verifyNumberOfCases(List<Case> casesToUpdate, ErrorInput errorInput) {
+        Set<Long> caseReferencesToUpdate = casesToUpdate.stream()
+            .map(Case::getCaseReferenceAsLong)
+            .collect(Collectors.toSet());
+
+        if (caseReferencesToUpdate.size() != casesToUpdate.size()) {
+            errorInput.addError(String.format("Duplicate case references found - expected %s unique references, found %s",
+                    casesToUpdate.size(), caseReferencesToUpdate.size()));
+        } else {
+            int dbCaseCount = caseDataRepository.getCaseCount(caseReferencesToUpdate);
+            if (dbCaseCount != casesToUpdate.size()) {
+                errorInput.addError(String.format("Difference in number of cases found in DB - expected %s, found %s in DB",
+                        dbCaseCount, casesToUpdate.size()));
+            }
         }
     }
 

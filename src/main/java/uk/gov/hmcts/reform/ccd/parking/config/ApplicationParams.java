@@ -8,9 +8,12 @@ import org.springframework.stereotype.Component;
 @Getter
 public class ApplicationParams {
 
-    @Value("${case_list_file}")
+    @Value("${case-list-file}")
     private String caseListFile;
 
-    @Value("${dry_run}")
+    @Value("${dry-run}")
     private boolean dryRun;
+
+    @Value("${parking-state-prefix}")
+    private String parkingStatePrefix;
 }
